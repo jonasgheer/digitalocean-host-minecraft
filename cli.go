@@ -118,8 +118,14 @@ func main() {
 		fmt.Println(*admins)
 		fmt.Println(*whitelisted)
 		fmt.Println(os.Args)
-		// create droplet
-		ip, err := createDroplet(ctx, client, dropletName, dropletName)
+		publicKeyPath := filepath.Join(sshDir, publicKeyFileName)
+		publicKey, err := readPublicKey(publicKeyPath)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		pubKeyFingerprint := ssh.FingerprintLegacyMD5(publicKey)
+		ip, err := createDroplet(ctx, client, pubKeyFingerprint, dropletName, dropletName)
 		fmt.Printf("Instance ip: %s", ip)
 		return
 
@@ -132,24 +138,40 @@ func main() {
 	}
 }
 
-func createDroplet(ctx context.Context, client *godo.Client, name, tag string) (ip string, err error) {
+func readPublicKey(filepath string) (ssh.PublicKey, error) {
+	key, err := ioutil.ReadFile(filepath)
+	if err != nil {
+		return nil, err
+	}
+	k, _, _, _, err := ssh.ParseAuthorizedKey(key)
+	return k, err
+}
+
+func createDroplet(ctx context.Context, client *godo.Client, pubKeyFingerprint, name, tag string) (ip string, err error) {
 	droplet, createResp, err := client.Droplets.Create(ctx, &godo.DropletCreateRequest{
 		Name:   dropletName,
 		Region: "ams3",
 		Size:   "s-1vcpu-1gb",
+		SSHKeys: []godo.DropletCreateSSHKey{
+			godo.DropletCreateSSHKey{
+				Fingerprint: pubKeyFingerprint,
+			},
+		},
 		Image: godo.DropletCreateImage{
 			Slug: "ubuntu-18-04-x64",
 		},
 		Tags: []string{dropletName},
+		//UserData: startupscript
 	})
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+	// capture action and wait for 100% before returning ip
 	defer createResp.Body.Close()
-	createResp.Body.Read()
+	//createResp.Body.Read()
 
-	ip, err := droplet.PublicIPv4()
+	//ip, err := droplet.PublicIPv4()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
