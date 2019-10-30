@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -126,7 +127,7 @@ func main() {
 		}
 		pubKeyFingerprint := ssh.FingerprintLegacyMD5(publicKey)
 		ip, err := createDroplet(ctx, client, pubKeyFingerprint, dropletName, dropletName)
-		fmt.Printf("Instance ip: %s", ip)
+		fmt.Printf("Instance ip: %s\n", ip)
 		return
 
 	case "stop":
@@ -149,7 +150,7 @@ func readPublicKey(filepath string) (ssh.PublicKey, error) {
 
 func createDroplet(ctx context.Context, client *godo.Client, pubKeyFingerprint, name, tag string) (ip string, err error) {
 	droplet, createResp, err := client.Droplets.Create(ctx, &godo.DropletCreateRequest{
-		Name:   dropletName,
+		Name:   name,
 		Region: "ams3",
 		Size:   "s-1vcpu-1gb",
 		SSHKeys: []godo.DropletCreateSSHKey{
@@ -160,23 +161,34 @@ func createDroplet(ctx context.Context, client *godo.Client, pubKeyFingerprint, 
 		Image: godo.DropletCreateImage{
 			Slug: "ubuntu-18-04-x64",
 		},
-		Tags: []string{dropletName},
+		Tags: []string{tag},
 		//UserData: startupscript
 	})
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	// capture action and wait for 100% before returning ip
-	defer createResp.Body.Close()
-	//createResp.Body.Read()
-
-	//ip, err := droplet.PublicIPv4()
-	if err != nil {
-		fmt.Println(err)
+	if len(createResp.Links.Actions) > 1 {
+		fmt.Println("more than noe action returned from create droplet")
 		os.Exit(1)
 	}
-	fmt.Println(createResp)
+	actionID := createResp.Links.Actions[0].ID
+	fmt.Println("waiting for ip...")
+	for {
+		a, _, err := client.Actions.Get(ctx, actionID)
+		if err != nil {
+			return "", err
+		}
+		if a.Status == "completed" {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	droplet, _, err = client.Droplets.Get(ctx, droplet.ID)
+	if err != nil {
+		return "", err
+	}
+	return droplet.PublicIPv4()
 }
 
 func contains(files []os.FileInfo, filename string) bool {
